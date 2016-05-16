@@ -2,6 +2,7 @@ package scala.scalanative
 package sbtplugin
 
 import sbt._
+import scalanative.compiler.{Target => NativeTarget}
 
 object ScalaNativePlugin extends AutoPlugin {
   val autoImport = AutoImport
@@ -11,6 +12,9 @@ object ScalaNativePlugin extends AutoPlugin {
 
     val nativeVerbose = settingKey[Boolean](
       "Enable verbose tool logging.")
+
+    val nativeTarget = settingKey[NativeTarget](
+      "Native compilation target.")
 
     val nativeClang = settingKey[File](
       "Location of the clang++ compiler.")

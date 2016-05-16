@@ -2,8 +2,10 @@ package scala.scalanative
 package sbtplugin
 
 import sbt._, Keys._, complete.DefaultParsers._
-import scalanative.compiler.{Compiler => NativeCompiler, Opts => NativeOpts}
 import ScalaNativePlugin.autoImport._
+import scalanative.compiler.{Compiler => NativeCompiler,
+                             Opts => NativeOpts,
+                             Target => NativeTarget}
 
 object ScalaNativePluginInternal {
   private def cpToStrings(cp: Seq[File]): Seq[String] =
@@ -69,6 +71,8 @@ object ScalaNativePluginInternal {
 
     resolvers += Resolver.sonatypeRepo("snapshots"),
 
+    nativeTarget := NativeTarget.current,
+
     nativeVerbose := false,
 
     nativeClang := {
@@ -102,7 +106,6 @@ object ScalaNativePluginInternal {
       val target    = (crossTarget in Compile).value
       val appll     = target / (moduleName.value + "-out.ll")
       val binary    = (artifactPath in nativeLink).value
-      val verbose   = nativeVerbose.value
       val clang     = nativeClang.value
       val clangOpts = nativeClangOptions.value
       val dotpath   = nativeEmitDependencyGraphPath.value
@@ -111,7 +114,8 @@ object ScalaNativePluginInternal {
                                      abs(appll),
                                      dotpath.map(abs),
                                      entry,
-                                     verbose)
+                                     nativeTarget.value,
+                                     nativeVerbose.value)
 
       checkThatClangIsRecentEnough(clang)
 
