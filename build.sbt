@@ -164,6 +164,7 @@ lazy val sbtplugin =
       sbtPlugin := true,
       // Scalafmt fails to format source of sbt plugins.
       scalafmtTest := {}
+      addSbtPlugin("sh.den" % "sbt-cross-project" % "0.1-SNAPSHOT")
     ).
     dependsOn(tools)
 
