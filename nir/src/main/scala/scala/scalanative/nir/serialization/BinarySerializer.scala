@@ -115,14 +115,10 @@ final class BinarySerializer(buffer: ByteBuffer) {
       putInt(T.IfCf); putVal(v); putNext(thenp); putNext(elsep)
     case Cf.Switch(v, default, cases) =>
       putInt(T.SwitchCf); putVal(v); putNext(default); putNexts(cases)
-    case Cf.Invoke(ty, f, args, succ, fail) =>
-      putInt(T.InvokeCf); putType(ty); putVal(f); putVals(args); putNext(succ);
-      putNext(fail)
-
     case Cf.Throw(v) =>
       putInt(T.ThrowCf); putVal(v)
-    case Cf.Try(norm, exc) =>
-      putInt(T.TryCf); putNext(norm); putNext(exc)
+    case Cf.Try(norm, cases) =>
+      putInt(T.TryCf); putNext(norm); putNexts(cases)
   }
 
   private def putComp(comp: Comp) = comp match {
@@ -238,10 +234,9 @@ final class BinarySerializer(buffer: ByteBuffer) {
 
   private def putNexts(nexts: Seq[Next]) = putSeq(nexts)(putNext)
   private def putNext(next: Next) = next match {
-    case Next.Succ(n)      => putInt(T.SuccNext); putLocal(n)
-    case Next.Fail(n)      => putInt(T.FailNext); putLocal(n)
     case Next.Label(n, vs) => putInt(T.LabelNext); putLocal(n); putVals(vs)
     case Next.Case(v, n)   => putInt(T.CaseNext); putVal(v); putLocal(n)
+    case Next.Catch(ty, n) => putInt(T.CatchNext); putType(ty); putLocal(n)
   }
 
   private def putOp(op: Op) = op match {
@@ -364,7 +359,6 @@ final class BinarySerializer(buffer: ByteBuffer) {
   private def putTypes(tys: Seq[Type]): Unit = putSeq(tys)(putType)
   private def putType(ty: Type): Unit = ty match {
     case Type.None         => putInt(T.NoneType)
-    case Type.Void         => putInt(T.VoidType)
     case Type.Vararg       => putInt(T.VarargType)
     case Type.Ptr          => putInt(T.PtrType)
     case Type.Bool         => putInt(T.BoolType)

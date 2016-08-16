@@ -1,89 +1,70 @@
 package scala.scalanative
 package compiler
 
+import java.lang.System.{currentTimeMillis => time}
+import java.nio.ByteBuffer
 import scala.collection.mutable
-import codegen.{GenTextualLLVM, GenTextualNIR}
+import codegen.LLCodeGen
 import linker.Linker
 import nir._, Shows._
 import nir.serialization._
 import util.sh
+import transform._
 
 final class Compiler(opts: Opts) {
   private lazy val entry =
     Global.Member(Global.Top(opts.entry), "main_class.ssnr.ObjectArray_unit")
 
-  private lazy val passCompanions: Seq[PassCompanion] = Seq(
-      Seq(
-          pass.LocalBoxingElimination,
-          pass.DeadCodeElimination
-      ),
-      maybeInjectMain,
-      Seq(pass.ExternHoisting,
-          pass.ModuleLowering,
-          pass.RuntimeTypeInfoInjection,
-          pass.AsLowering,
-          pass.TraitLowering,
-          pass.ClassLowering,
-          pass.StringLowering,
-          pass.ConstLowering,
-          pass.SizeofLowering,
-          pass.UnitLowering,
-          pass.ThrowLowering,
-          pass.NothingLowering,
-          pass.TryLowering,
-          pass.StackallocHoisting,
-          pass.CopyPropagation)).flatten
-
-  private def maybeInjectMain: Seq[PassCompanion] =
-    if (!opts.sharedLibrary) Seq(pass.MainInjection) else Seq.empty
-
-  private lazy val (links, assembly): (Seq[Attr.Link], Seq[Defn]) = {
-    val deps           = passCompanions.flatMap(_.depends).distinct
-    val injects        = passCompanions.flatMap(_.injects).distinct
-    val linker         = new Linker(opts.dotpath, opts.classpath)
-    val (links, defns) = linker.linkClosed(entry +: deps)
-
-    (links, defns ++ injects)
+  private def measure[T](label: String)(f: => T): T = {
+    val start = time()
+    val res   = f
+    val end   = time()
+    println(s"-- $label: ${end - start} ms")
+    res
   }
 
-  private lazy val passes = {
-    val ctx = Ctx(fresh = Fresh("tx"),
-                  entry = entry,
-                  top = analysis.ClassHierarchy(assembly))
+  private lazy val depends = Seq(codegen.LLValGen, codegen.LLDefnGen)
 
-    passCompanions.map(_.apply(ctx))
-  }
+  private lazy val (links, assembly): (Seq[Attr.Link], Seq[Defn]) =
+    measure("linking") {
+      val deps           = depends.flatMap(_.depends).distinct
+      val injects        = depends.flatMap(_.injects).distinct
+      val linker         = new Linker(opts.dotpath, opts.classpath)
+      val (links, defns) = linker.linkClosed(entry +: deps)
+      val assembly       = defns ++ injects
 
-  private def codegen(assembly: Seq[Defn]): Unit = {
-    val gen = new GenTextualLLVM(assembly)
-    serializeFile((defns, bb) => gen.gen(bb), assembly, opts.outpath)
-  }
+      if (opts.verbose) dump(assembly, ".hnir")
 
-  private def debug(assembly: Seq[Defn], suffix: String) =
-    if (opts.verbose) {
-      val gen = new GenTextualNIR(assembly)
-      serializeFile((defns, bb) => gen.gen(bb),
-                    assembly,
-                    opts.outpath + s".$suffix.hnir")
+      (links, defns ++ injects)
     }
 
-  def apply(): Seq[Attr.Link] = {
-    def loop(assembly: Seq[Defn], passes: Seq[(Pass, Int)]): Seq[Defn] =
-      passes match {
-        case Seq() =>
-          assembly
+  private lazy val ctx = Ctx(fresh = Fresh("tx"),
+                             entry = entry,
+                             world = analysis.ClassHierarchy(assembly))
 
-        case (pass, id) +: rest =>
-          val nassembly = pass(assembly)
-          val n         = id + 1
-          val padded    = if (n < 10) "0" + n else "" + n
+  private lazy val transform = Transform.compose(DeadCodeElimination(ctx),
+                                                 LocalBoxingElimination(ctx),
+                                                 StackallocHoisting(ctx))
 
-          debug(nassembly, padded + "-" + pass.getClass.getSimpleName)
-          loop(nassembly, rest)
-      }
+  private def gencode(assembly: Seq[Defn]): Unit = measure("codegen") {
+    def serialize(defns: Seq[Defn], bb: ByteBuffer): Unit = {
+      val gen = new LLCodeGen(assembly, ctx.entry, transform)(ctx.world)
+      gen.gen(bb)
+    }
+    serializeFile(serialize _, assembly, opts.outpath)
+  }
 
-    debug(assembly, "00")
-    codegen(loop(assembly, passes.zipWithIndex))
+  private def dump(assembly: Seq[Defn], suffix: String) = {
+    def serialize(defns: Seq[Defn], bb: ByteBuffer): Unit = {
+      bb.put(nir.Shows.showDefns(assembly).toString.getBytes)
+    }
+    serializeFile(serialize _, assembly, opts.outpath + suffix)
+  }
+
+  def apply(): Seq[Attr.Link] = measure("total") {
+    val assembly = this.assembly
+
+    gencode(assembly)
 
     links
   }

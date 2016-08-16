@@ -33,6 +33,30 @@ object ControlFlow {
 
       result.toSeq
     }
+
+    lazy val eh: Map[Local, Option[Local]] = {
+      val exchandler = mutable.Map.empty[Local, Option[Local]]
+      val blocks     = toSeq.map(_.block)
+
+      blocks.foreach { block =>
+        val cur = exchandler.get(block.name).flatten
+
+        exchandler(block.name) = cur
+        block.cf match {
+          case Cf.Try(succ, catches) =>
+            exchandler(succ.name) = Some(block.name)
+            catches.foreach { ctch =>
+              exchandler(ctch.name) = cur
+            }
+          case _ =>
+            ()
+        }
+      }
+
+      exchandler.toMap
+    }
+
+    lazy val toSeq = map(identity)
   }
 
   def apply(blocks: Seq[Block]): Graph = {
@@ -62,12 +86,11 @@ object ControlFlow {
             cases.foreach { case_ =>
               edge(node, nodes(case_.name), case_)
             }
-          case Cf.Invoke(_, _, _, succ, fail) =>
-            edge(node, nodes(succ.name), succ)
-            edge(node, nodes(fail.name), fail)
-          case Cf.Try(next1, next2) =>
-            edge(node, nodes(next1.name), next1)
-            edge(node, nodes(next2.name), next2)
+          case Cf.Try(default, cases) =>
+            edge(node, nodes(default.name), default)
+            cases.foreach { case_ =>
+              edge(node, nodes(case_.name), case_)
+            }
           case _ =>
             unreachable
         }

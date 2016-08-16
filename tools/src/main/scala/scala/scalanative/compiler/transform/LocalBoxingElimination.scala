@@ -1,6 +1,6 @@
 package scala.scalanative
 package compiler
-package pass
+package transform
 
 import scala.collection.mutable
 import nir._
@@ -10,53 +10,52 @@ import nir._
  *  but we need this to remove boxing around pointer operations
  *  that happen to have generic signatures.
  */
-class LocalBoxingElimination extends Pass {
+class LocalBoxingElimination extends Transform {
   import LocalBoxingElimination._
 
-  override def preBlock = {
-    case block =>
-      val records = mutable.UnrolledBuffer.empty[Record]
+  def apply(blocks: Seq[Block]) = blocks.map { block =>
+    val records = mutable.UnrolledBuffer.empty[Record]
 
-      val newInsts = block.insts.map {
-        case inst @ Inst(to, op @ Op.Call(_, BoxRef(code), Seq(_, from))) =>
-          records.collectFirst {
-            // if a box for given value already exists, re-use the box
-            case Box(rcode, rfrom, rto) if rcode == code && from == rfrom =>
-              Inst(to, Op.Copy(rto))
+    val newInsts = block.insts.map {
+      case inst @ Inst(to, op @ Op.Call(_, BoxRef(code), Seq(_, from))) =>
+        records.collectFirst {
+          // if a box for given value already exists, re-use the box
+          case Box(rcode, rfrom, rto) if rcode == code && from == rfrom =>
+            Inst(to, Op.Copy(rto))
 
-            // if we re-box previously unboxed value, re-use the original box
-            case Unbox(rcode, rfrom, rto) if rcode == code && from == rto =>
-              Inst(to, Op.Copy(rfrom))
-          }.getOrElse {
-            // otherwise do actual boxing
-            records += Box(code, from, Val.Local(to, op.resty))
-            inst
-          }
-
-        case inst @ Inst(to, op @ Op.Call(_, UnboxRef(code), Seq(_, from))) =>
-          records.collectFirst {
-            // if we unbox previously boxed value, return original value
-            case Box(rcode, rfrom, rto) if rcode == code && from == rto =>
-              Inst(to, Op.Copy(rfrom))
-
-            // if an unbox for this value already exists, re-use unbox
-            case Unbox(rcode, rfrom, rto) if rcode == code && from == rfrom =>
-              Inst(to, Op.Copy(rto))
-          }.getOrElse {
-            // otherwise do actual unboxing
-            records += Unbox(code, from, Val.Local(to, op.resty))
-            inst
-          }
-
-        case inst =>
+          // if we re-box previously unboxed value, re-use the original box
+          case Unbox(rcode, rfrom, rto) if rcode == code && from == rto =>
+            Inst(to, Op.Copy(rfrom))
+        }.getOrElse {
+          // otherwise do actual boxing
+          records += Box(code, from, Val.Local(to, op.resty))
           inst
-      }
+        }
 
-      Seq(block.copy(insts = newInsts))
+      case inst @ Inst(to, op @ Op.Call(_, UnboxRef(code), Seq(_, from))) =>
+        records.collectFirst {
+          // if we unbox previously boxed value, return original value
+          case Box(rcode, rfrom, rto) if rcode == code && from == rto =>
+            Inst(to, Op.Copy(rfrom))
+
+          // if an unbox for this value already exists, re-use unbox
+          case Unbox(rcode, rfrom, rto) if rcode == code && from == rfrom =>
+            Inst(to, Op.Copy(rto))
+        }.getOrElse {
+          // otherwise do actual unboxing
+          records += Unbox(code, from, Val.Local(to, op.resty))
+          inst
+        }
+
+      case inst =>
+        inst
+    }
+
+    block.copy(insts = newInsts)
   }
 }
 
-object LocalBoxingElimination extends PassCompanion {
+object LocalBoxingElimination {
   private sealed abstract class Record
   private final case class Box(code: Char, from: nir.Val, to: nir.Val)
       extends Record

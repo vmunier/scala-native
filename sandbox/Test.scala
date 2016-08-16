@@ -15,12 +15,18 @@ object ExceptionHandling {
 
   def test1() = assert {
     try {
-      try throwB()
-      catch {
-        case a: A => false
+      try {
+        println("throwing B")
+        throwB()
+      } catch {
+        case a: A =>
+          println("caught A")
+          false
       }
     } catch {
-      case b: B => true
+      case b: B =>
+        println("caught B")
+        true
     }
   }
 

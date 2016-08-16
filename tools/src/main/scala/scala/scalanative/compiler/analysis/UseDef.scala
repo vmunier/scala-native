@@ -3,7 +3,7 @@ package compiler
 package analysis
 
 import scala.collection.mutable
-import ClassHierarchy.Top
+import ClassHierarchy.World
 import ClassHierarchyExtractors._
 import nir._
 
@@ -16,17 +16,15 @@ object UseDef {
   private class CollectLocalValDeps extends Pass {
     val deps = mutable.UnrolledBuffer.empty[Local]
 
-    override def preVal = {
+    override def onVal(v: Val) = v match {
       case v @ Val.Local(n, _) =>
         deps += n
-        v
+      case _ =>
+        ()
     }
 
-    override def preNext = {
-      case next =>
-        deps += next.name
-        next
-    }
+    override def onNext(next: Next) =
+      deps += next.name
   }
 
   private def deps(inst: Inst): Seq[Local] = {
@@ -41,7 +39,7 @@ object UseDef {
     collect.deps.distinct
   }
 
-  private def isPure(op: Op)(implicit top: Top) = op match {
+  private def isPure(op: Op)(implicit world: World) = op match {
     case Op.Call(_, Val.Global(Ref(node), _), _) =>
       node.attrs.isPure
 
@@ -55,7 +53,7 @@ object UseDef {
       false
   }
 
-  def apply(blocks: Seq[Block])(implicit top: Top): Map[Local, Def] = {
+  def apply(blocks: Seq[Block])(implicit world: World): Map[Local, Def] = {
     val defs = mutable.Map.empty[Local, Def]
 
     def enterDef(n: Local) = {

@@ -14,6 +14,11 @@ sealed abstract class Type {
     case _ =>
       unsupported(s"${this}.elemty($path)")
   }
+
+  def isNothing: Boolean =
+    this eq Type.Nothing
+  def isUnit: Boolean =
+    this eq Type.Unit
 }
 object Type {
   sealed trait Named extends Type {
@@ -22,7 +27,6 @@ object Type {
 
   // low-level types
   final case object None   extends Type
-  final case object Void   extends Type
   final case object Vararg extends Type
   final case object Ptr    extends Type
 

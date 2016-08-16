@@ -121,10 +121,8 @@ final class BinaryDeserializer(_buffer: => ByteBuffer) {
     case T.JumpCf        => Cf.Jump(getNext)
     case T.IfCf          => Cf.If(getVal, getNext, getNext)
     case T.SwitchCf      => Cf.Switch(getVal, getNext, getNexts)
-    case T.InvokeCf      => Cf.Invoke(getType, getVal, getVals, getNext, getNext)
-
-    case T.ThrowCf => Cf.Throw(getVal)
-    case T.TryCf   => Cf.Try(getNext, getNext)
+    case T.ThrowCf       => Cf.Throw(getVal)
+    case T.TryCf         => Cf.Try(getNext, getNexts)
   }
 
   private def getComp(): Comp = getInt match {
@@ -212,10 +210,9 @@ final class BinaryDeserializer(_buffer: => ByteBuffer) {
 
   private def getNexts(): Seq[Next] = getSeq(getNext)
   private def getNext(): Next = getInt match {
-    case T.SuccNext  => Next.Succ(getLocal)
-    case T.FailNext  => Next.Fail(getLocal)
     case T.LabelNext => Next.Label(getLocal, getVals)
     case T.CaseNext  => Next.Case(getVal, getLocal)
+    case T.CatchNext => Next.Catch(getType, getLocal)
   }
 
   private def getOp(): Op = getInt match {
@@ -248,7 +245,6 @@ final class BinaryDeserializer(_buffer: => ByteBuffer) {
   private def getTypes(): Seq[Type] = getSeq(getType)
   private def getType(): Type = getInt match {
     case T.NoneType     => Type.None
-    case T.VoidType     => Type.Void
     case T.VarargType   => Type.Vararg
     case T.PtrType      => Type.Ptr
     case T.BoolType     => Type.Bool

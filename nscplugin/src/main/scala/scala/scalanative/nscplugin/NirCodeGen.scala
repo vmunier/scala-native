@@ -660,14 +660,12 @@ abstract class NirCodeGen
                finalizer: Tree,
                focus: Focus): Focus =
       focus.branchTry(retty,
-                      normal = genExpr(expr, _),
-                      exc = genCatch(retty, catches, _, _))
+                      normalf = genExpr(expr, _),
+                      catchfs = genCatches(retty, catches))
 
-    def genCatch(retty: nir.Type,
-                 catches: List[Tree],
-                 exc: Val,
-                 focus: Focus): Focus = {
-      val cases = catches.map {
+    def genCatches(retty: nir.Type,
+                   catches: List[Tree]): Seq[(nir.Type, Focus => Focus)] =
+      catches.map {
         case CaseDef(pat, _, body) =>
           val (excty, symopt) = pat match {
             case Typed(Ident(nme.WILDCARD), tpt) =>
@@ -678,29 +676,13 @@ abstract class NirCodeGen
               (genType(pat.symbol.tpe), Some(pat.symbol))
           }
           val f = { focus: Focus =>
-            val enter = symopt.map { sym =>
-              val cast = focus withOp Op.As(excty, exc)
-              curMethodEnv.enter(sym, cast.value)
-              cast
-            }.getOrElse(focus)
-
-            genExpr(body, enter)
+            val exc = focus.value
+            symopt.foreach(curMethodEnv.enter(_, exc))
+            genExpr(body, focus)
           }
 
           (excty, f)
       }
-
-      def wrap(cases: Seq[(nir.Type, Focus => Focus)], focus: Focus): Focus =
-        cases match {
-          case Seq() =>
-            focus finish Cf.Throw(exc)
-          case (excty, f) +: rest =>
-            val cond = focus withOp Op.Is(excty, exc)
-            cond.branchIf(cond.value, retty, f, wrap(rest, _))
-        }
-
-      wrap(cases, focus)
-    }
 
     def genFinally(finalizer: Tree, focus: Focus): Focus = ???
 

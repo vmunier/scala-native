@@ -60,12 +60,10 @@ object Shows {
       sh"$name"
     case Next.Label(name, args) =>
       sh"$name(${r(args, sep = ", ")})"
-    case Next.Succ(name) =>
-      sh"succ $name"
-    case Next.Fail(name) =>
-      sh"fail $name"
     case Next.Case(value, name) =>
       sh"case $value => $name"
+    case Next.Catch(ty, name) =>
+      sh"catch[$ty] => $name"
   }
 
   implicit val showCf: Show[Cf] = Show {
@@ -82,13 +80,11 @@ object Shows {
     case Cf.Switch(scrut, default, cases) =>
       val body = brace(r(cases.map(i(_)) :+ i(sh"default: $default")))
       sh"switch $scrut $body"
-    case Cf.Invoke(ty, f, args, succ, fail) =>
-      sh"invoke[$ty] $f(${r(args, sep = ", ")}) to $succ unwind $fail"
-
     case Cf.Throw(value) =>
       sh"throw $value"
-    case Cf.Try(normal, exc) =>
-      sh"try $normal catch $exc"
+    case Cf.Try(normal, cases) =>
+      val body = brace(r(cases.map(i(_))))
+      sh"try $normal $body"
   }
 
   implicit val showOp: Show[Op] = Show {
@@ -258,7 +254,6 @@ object Shows {
 
   implicit val showType: Show[Type] = Show {
     case Type.None                     => unreachable
-    case Type.Void                     => "void"
     case Type.Vararg                   => "..."
     case Type.Ptr                      => "ptr"
     case Type.Bool                     => "bool"

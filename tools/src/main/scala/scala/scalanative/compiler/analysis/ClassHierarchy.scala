@@ -11,7 +11,7 @@ object ClassHierarchy {
     var id: Int   = -1
     var in: Scope = _
 
-    def inTop: Boolean   = in.isInstanceOf[Top]
+    def inWorld: Boolean = in.isInstanceOf[World]
     def inClass: Boolean = in.isInstanceOf[Class]
     def inTrait: Boolean = in.isInstanceOf[Trait]
     def attrs: Attrs
@@ -24,8 +24,8 @@ object ClassHierarchy {
     def methods: Seq[Method] =
       members.collect { case meth: Method => meth }
 
-    def fields: Seq[Field] =
-      members.collect { case fld: Field => fld }
+    def vars: Seq[Var] =
+      members.collect { case fld: Var => fld }
   }
 
   final class Struct(val attrs: Attrs,
@@ -67,8 +67,8 @@ object ClassHierarchy {
       (base ++ traits.flatMap(_.alltraits)).distinct
     }
 
-    lazy val allfields: Seq[Field] =
-      parent.fold(Seq.empty[Field])(_.allfields) ++ fields
+    lazy val allvars: Seq[Var] =
+      parent.fold(Seq.empty[Var])(_.allvars) ++ vars
 
     lazy val allmethods: Seq[Method] =
       parent.fold(Seq.empty[Method])(_.allmethods) ++ methods
@@ -86,13 +86,21 @@ object ClassHierarchy {
 
     lazy val vtableValue: Val.Struct = Val.Struct(Global.None, vtable)
 
+    lazy val classStruct: Type.Struct = {
+      val data            = allvars.map(_.ty)
+      val classStructBody = Type.Ptr +: data
+      val classStructTy   = Type.Struct(name, classStructBody)
+
+      Type.Struct(name, classStructBody)
+    }
+
     lazy val typeStruct: Type.Struct =
       Type.Struct(Global.None, Seq(Type.I32, Type.Ptr, vtableStruct))
 
     lazy val typeValue: Val.Struct = Val
       .Struct(Global.None, Seq(Val.I32(id), Val.String(name.id), vtableValue))
 
-    lazy val typeConst: Val = Val.Global(name tag "class" tag "type", Type.Ptr)
+    lazy val typeConst: Val = Val.Global(name tag "type", Type.Ptr)
 
     lazy val vtable: Seq[Val] = {
       val base = parent.fold(Seq.empty[Val])(_.vtable)
@@ -137,13 +145,15 @@ object ClassHierarchy {
     }
   }
 
-  final class Method(val attrs: Attrs,
-                     val name: Global,
-                     val ty: nir.Type,
-                     val isConcrete: Boolean)
+  final case class Method(val attrs: Attrs,
+                          val name: Global,
+                          val ty: nir.Type,
+                          val blocks: Seq[Block] = Seq.empty)
       extends Node {
     var overrides: Seq[Method] = Seq()
     var overriden: Seq[Method] = Seq()
+
+    def isConcrete = blocks.nonEmpty
 
     def isVirtual = !isConcrete || overriden.nonEmpty
 
@@ -183,41 +193,49 @@ object ClassHierarchy {
     }
   }
 
-  final class Field(val attrs: Attrs, val name: Global, val ty: nir.Type)
+  final case class Var(attrs: Attrs, name: Global, ty: nir.Type, rhs: Val)
       extends Node {
     def index = {
       assert(inClass)
-      in.asInstanceOf[Class].allfields.indexOf(this)
+      in.asInstanceOf[Class].allvars.indexOf(this)
     }
   }
 
-  final class Top(val nodes: mutable.Map[Global, Node],
-                  val structs: Seq[Struct],
-                  val classes: Seq[Class],
-                  val traits: Seq[Trait],
-                  override val methods: Seq[Method],
-                  override val fields: Seq[Field])
+  final case class Const(attrs: Attrs, name: Global, ty: nir.Type, rhs: Val)
+      extends Node
+
+  final class World(val nodes: mutable.Map[Global, Node],
+                    val structs: Seq[Struct],
+                    val classes: Seq[Class],
+                    val traits: Seq[Trait],
+                    val consts: Seq[Const],
+                    override val methods: Seq[Method],
+                    override val vars: Seq[Var])
       extends Scope {
     def name  = Global.None
     def attrs = Attrs.None
+
+    lazy val traitMethods = methods.filter(_.inTrait)
   }
 
-  def apply(defns: Seq[Defn]): Top = {
+  def apply(defns: Seq[Defn]): World = {
     val nodes   = mutable.Map.empty[Global, Node]
     val structs = mutable.UnrolledBuffer.empty[Struct]
     val classes = mutable.UnrolledBuffer.empty[Class]
     val traits  = mutable.UnrolledBuffer.empty[Trait]
     val methods = mutable.UnrolledBuffer.empty[Method]
-    val fields  = mutable.UnrolledBuffer.empty[Field]
+    val vars    = mutable.UnrolledBuffer.empty[Var]
+    val consts  = mutable.UnrolledBuffer.empty[Const]
 
     def enter[T <: Node](name: Global, node: T): T = {
       nodes += name -> node
       node match {
-        case defn: Class  => classes += defn // id given in assignClassIds
-        case defn: Trait  => node.id = traits.length; traits += defn
-        case defn: Method => methods += defn // id given in assignMethodIds
-        case defn: Field  => node.id = fields.length; fields += defn
-        case defn: Struct => node.id = structs.length; structs += defn
+        case node: Class  => classes += node // id given in assignClassIds
+        case node: Trait  => node.id = traits.length; traits += node
+        case node: Method => methods += node // id given in assignMethodIds
+        case node: Struct => node.id = structs.length; structs += node
+        case node: Var    => node.id = vars.length; vars += node
+        case node: Const  => node.id = consts.length; consts += node
       }
       node
     }
@@ -235,40 +253,38 @@ object ClassHierarchy {
                         isModule = false))
 
       case defn: Defn.Module =>
-        val name = defn.name tag "module"
         val cls = new Class(defn.attrs,
-                            name,
+                            defn.name,
                             defn.parent,
                             defn.traits,
                             isModule = true)
         enter(defn.name, cls)
-        enter(name, cls)
-
-      case defn: Defn.Var =>
-        enter(defn.name, new Field(defn.attrs, defn.name, defn.ty))
 
       case defn: Defn.Declare =>
-        enter(defn.name,
-              new Method(defn.attrs, defn.name, defn.ty, isConcrete = false))
+        enter(defn.name, new Method(defn.attrs, defn.name, defn.ty))
 
       case defn: Defn.Define =>
         enter(defn.name,
-              new Method(defn.attrs, defn.name, defn.ty, isConcrete = true))
+              new Method(defn.attrs, defn.name, defn.ty, defn.blocks))
 
       case defn: Defn.Struct =>
         enter(defn.name, new Struct(defn.attrs, defn.name, defn.tys))
 
-      case _ =>
-        ()
+      case defn: Defn.Var =>
+        enter(defn.name, new Var(defn.attrs, defn.name, defn.ty, defn.init))
+
+      case defn: Defn.Const =>
+        enter(defn.name, new Const(defn.attrs, defn.name, defn.ty, defn.init))
     }
 
     defns.foreach(enterDefn)
-    val top = new Top(nodes = nodes,
-                      structs = structs,
-                      classes = classes,
-                      traits = traits,
-                      methods = methods,
-                      fields = fields)
+    val top = new World(nodes = nodes,
+                        structs = structs,
+                        classes = classes,
+                        traits = traits,
+                        methods = methods,
+                        vars = vars,
+                        consts = consts)
     top.members = nodes.values.toSeq
 
     def enrichMethods(): Unit = methods.foreach { node =>
@@ -286,7 +302,7 @@ object ClassHierarchy {
       }
     }
 
-    def enrichFields(): Unit = fields.foreach { node =>
+    def enrichVars(): Unit = vars.foreach { node =>
       val parent = nodes(node.name.top).asInstanceOf[Class]
       node.in = parent
       parent.members = parent.members :+ node
@@ -339,7 +355,7 @@ object ClassHierarchy {
     }
 
     enrichMethods()
-    enrichFields()
+    enrichVars()
     enrichClasses()
     enrichTraits()
     assignClassIds()
